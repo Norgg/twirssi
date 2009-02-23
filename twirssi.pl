@@ -1138,8 +1138,8 @@ Irssi::signal_add( "send text", "event_send_text" );
 Irssi::theme_register(
     [
         'twirssi_tweet',  '[$0$1$2] $3',
-        'twirssi_search', '[$0%r$1%n:%B@$2%n$3] $4',
-        'twirssi_reply',  '[$0\--> %B@$1%n$2] $3',
+        'twirssi_search', '[$0$1%n:$2$3] $4',
+        'twirssi_reply',  '[$0\--> $1$2] $3',
         'twirssi_dm',     '[$0%r@$1%n (%WDM%n)] $2',
         'twirssi_error',  'ERROR: $0',
     ]

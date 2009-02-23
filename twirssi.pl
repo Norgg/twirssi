@@ -843,7 +843,6 @@ sub monitor_child {
     my $new_last_poll;
     if ( open FILE, $filename ) {
         my @lines;
-        push @lines, [ MSGLEVEL_PUBLIC, "tweet", "", "\@face", "", "Hello there dudes." ];
         while (<FILE>) {
             chomp;
             last if /^__friends__/;

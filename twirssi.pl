@@ -717,7 +717,6 @@ sub do_updates {
 
     foreach my $t ( reverse @$tweets ) {
         my $text = decode_entities( $t->{text} );
-        $text = &hilight($text);
         my $reply = "tweet";
         if (    Irssi::settings_get_bool("show_reply_context")
             and $t->{in_reply_to_screen_name} ne $username
@@ -732,7 +731,6 @@ sub do_updates {
 
             if ($context) {
                 my $ctext = decode_entities( $context->{text} );
-                $ctext = &hilight($ctext);
                 printf $fh "id:%d account:%s nick:%s type:tweet %s\n",
                   $context->{id}, $username,
                   $context->{user}{screen_name}, $ctext;
@@ -768,7 +766,6 @@ sub do_updates {
           if exists $friends{ $t->{user}{screen_name} };
 
         my $text = decode_entities( $t->{text} );
-        $text = &hilight($text);
         printf $fh "id:%d account:%s nick:%s type:tweet %s\n",
           $t->{id}, $username, $t->{user}{screen_name}, $text;
     }
@@ -787,7 +784,6 @@ sub do_updates {
 
     foreach my $t ( reverse @$tweets ) {
         my $text = decode_entities( $t->{text} );
-        $text = &hilight($text);
         printf $fh "id:%d account:%s nick:%s type:dm %s\n",
           $t->{id}, $username, $t->{sender_screen_name}, $text;
     }
@@ -826,7 +822,6 @@ sub do_updates {
 
             foreach my $t ( reverse @{ $search->{results} } ) {
                 my $text = decode_entities( $t->{text} );
-                $text = &hilight($text);
                 printf $fh "id:%d account:%s nick:%s type:search topic:%s %s\n",
                   $t->{id}, $username, $t->{from_user}, $topic, $text;
             }
@@ -894,14 +889,14 @@ sub monitor_child {
                 push @lines,
                   [
                     ( MSGLEVEL_PUBLIC | $hilight ),
-                    $meta{type}, $account, $meta{nick}, $marker, $_
+                    $meta{type}, $account, "\@".$meta{nick}, $marker, $_
                   ];
             } elsif ( $meta{type} eq 'search' ) {
                 push @lines,
                   [
                     ( MSGLEVEL_PUBLIC | $hilight ),
                     $meta{type}, $account, $meta{topic},
-                    $meta{nick}, $marker,  $_
+                    "\@".$meta{nick}, $marker,  $_
                   ];
                 if ( $meta{id} >
                     $id_map{__searches}{ $meta{account} }{ $meta{topic} } )
@@ -913,7 +908,7 @@ sub monitor_child {
                 push @lines,
                   [
                     ( MSGLEVEL_MSGS | $hilight ),
-                    $meta{type}, $account, $meta{nick}, $_
+                    $meta{type}, $account, "\@".$meta{nick}, $_
                   ];
             } elsif ( $meta{type} eq 'searchid' ) {
                 print "Search '$meta{topic}' returned id $meta{id}" if &debug;
@@ -947,6 +942,11 @@ sub monitor_child {
         if ($new_last_poll) {
             print "new last_poll = $new_last_poll" if &debug;
             for my $line (@lines) {
+                if ( Irssi::settings_get_bool("twirssi_auto_nick_hilighting") ) {
+                    for (@$line[ 2 .. $#$line ]) {
+                        $_ = hilight($_);
+                    }
+                }
                 $window->printformat(
                     $line->[0],
                     "twirssi_" . $line->[1],
@@ -1115,15 +1115,12 @@ sub get_poll_time {
 sub hilight {
     my $text = shift;
 
-    if ( Irssi::settings_get_str("twirssi_nick_color") ) {
-        my $c = Irssi::settings_get_str("twirssi_nick_color");
-        $c = $irssi_to_mirc_colors{$c};
-        $text =~ s/(^|\W)\@([-\w]+)/$1\cC$c\@$2\cO/g if $c;
-    }
+    $text =~ s/(^|\W)\@([-\w]+)/$1."\cC".simple_hash($2)."@".$2."\cC"/ge;
+
     if ( Irssi::settings_get_str("twirssi_topic_color") ) {
         my $c = Irssi::settings_get_str("twirssi_topic_color");
         $c = $irssi_to_mirc_colors{$c};
-        $text =~ s/(^|\W)\#([-\w]+)/$1\cC$c\#$2\cO/g if $c;
+        $text =~ s/(^|\W)\#([-\w]+)/$1\cC$c\#$2\cC/g if $c;
     }
     $text =~ s/[\n\r]/ /g;
 
@@ -1134,7 +1131,7 @@ Irssi::signal_add( "send text", "event_send_text" );
 
 Irssi::theme_register(
     [
-        'twirssi_tweet',  '[$0%B@$1%n$2] $3',
+        'twirssi_tweet',  '[$0$1$2] $3',
         'twirssi_search', '[$0%r$1%n:%B@$2%n$3] $4',
         'twirssi_reply',  '[$0\--> %B@$1%n$2] $3',
         'twirssi_dm',     '[$0%r@$1%n (%WDM%n)] $2',
@@ -1152,7 +1149,6 @@ Irssi::settings_add_str( "twirssi", "twitter_usernames", undef );
 Irssi::settings_add_str( "twirssi", "twitter_passwords", undef );
 Irssi::settings_add_str( "twirssi", "twirssi_replies_store",
     ".irssi/scripts/twirssi.json" );
-Irssi::settings_add_str( "twirssi", "twirssi_nick_color",  "%B" );
 Irssi::settings_add_str( "twirssi", "twirssi_topic_color", "%r" );
 Irssi::settings_add_bool( "twirssi", "tweet_to_away",             0 );
 Irssi::settings_add_bool( "twirssi", "show_reply_context",        0 );
@@ -1165,6 +1161,7 @@ Irssi::settings_add_bool( "twirssi", "twirssi_use_reply_aliases", 0 );
 Irssi::settings_add_bool( "twirssi", "twirssi_notify_timeouts",   1 );
 Irssi::settings_add_bool( "twirssi", "twirssi_hilights",          1 );
 Irssi::settings_add_bool( "twirssi", "tweet_window_input",        0 );
+Irssi::settings_add_bool( "twirssi", "twirssi_auto_nick_hilighting", 0);
 
 $last_poll = time - &get_poll_time;
 $window = Irssi::window_find_name( Irssi::settings_get_str('twitter_window') );
@@ -1278,5 +1275,27 @@ if ($window) {
           . Irssi::settings_get_str('twitter_window')
           . " or change the value of twitter_window.  Then, reload twirssi." );
 }
+
+# This gave reasonable distribution values when run across
+# /usr/share/dict/words
+#
+# Copied from nickcolor.pl irssi script.
+
+sub simple_hash {
+  my ($string) = @_;
+  chomp $string;
+  my @chars = split //, $string;
+  my $counter;
+
+  foreach my $char (@chars) {
+    $counter += ord $char;
+  }
+
+  $counter = ($counter % 11) + 2;
+
+  return $counter;
+}
+
+
 
 # vim: set sts=4 expandtab:

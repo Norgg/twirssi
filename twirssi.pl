@@ -843,6 +843,7 @@ sub monitor_child {
     my $new_last_poll;
     if ( open FILE, $filename ) {
         my @lines;
+        push @lines, [ MSGLEVEL_PUBLIC, "tweet", "", "\@face", "", "Hello there dudes." ];
         while (<FILE>) {
             chomp;
             last if /^__friends__/;
@@ -942,10 +943,8 @@ sub monitor_child {
         if ($new_last_poll) {
             print "new last_poll = $new_last_poll" if &debug;
             for my $line (@lines) {
-                if ( Irssi::settings_get_bool("twirssi_auto_nick_hilighting") ) {
-                    for (@$line[ 2 .. $#$line ]) {
-                        $_ = hilight($_);
-                    }
+                for (@$line[ 2 .. $#$line ]) {
+                    $_ = hilight($_);
                 }
                 $window->printformat(
                     $line->[0],
@@ -1114,8 +1113,16 @@ sub get_poll_time {
 
 sub hilight {
     my $text = shift;
-
-    $text =~ s/(^|\W)\@([-\w]+)/$1."\cC".simple_hash($2)."@".$2."\cC"/ge;
+    
+    if ( Irssi::settings_get_bool("twirssi_auto_nick_coloring") ) {
+        $text =~ s/(^|\W)\@([-\w]+)/$1."\cC".simple_hash($2)."@".$2."\cC"/ge;
+    }
+    
+    if ( Irssi::settings_get_str("twirssi_nick_color") ) {
+        my $c = Irssi::settings_get_str("twirssi_nick_color");
+        $c = $irssi_to_mirc_colors{$c};
+        $text =~ s/(^|\W)\@([-\w]+)/$1\cC$c\@$2\cO/g if $c;
+    }
 
     if ( Irssi::settings_get_str("twirssi_topic_color") ) {
         my $c = Irssi::settings_get_str("twirssi_topic_color");
@@ -1149,6 +1156,7 @@ Irssi::settings_add_str( "twirssi", "twitter_usernames", undef );
 Irssi::settings_add_str( "twirssi", "twitter_passwords", undef );
 Irssi::settings_add_str( "twirssi", "twirssi_replies_store",
     ".irssi/scripts/twirssi.json" );
+Irssi::settings_add_str( "twirssi", "twirssi_nick_color",  "%B" );
 Irssi::settings_add_str( "twirssi", "twirssi_topic_color", "%r" );
 Irssi::settings_add_bool( "twirssi", "tweet_to_away",             0 );
 Irssi::settings_add_bool( "twirssi", "show_reply_context",        0 );
@@ -1161,7 +1169,7 @@ Irssi::settings_add_bool( "twirssi", "twirssi_use_reply_aliases", 0 );
 Irssi::settings_add_bool( "twirssi", "twirssi_notify_timeouts",   1 );
 Irssi::settings_add_bool( "twirssi", "twirssi_hilights",          1 );
 Irssi::settings_add_bool( "twirssi", "tweet_window_input",        0 );
-Irssi::settings_add_bool( "twirssi", "twirssi_auto_nick_hilighting", 0);
+Irssi::settings_add_bool( "twirssi", "twirssi_auto_nick_coloring", 0);
 
 $last_poll = time - &get_poll_time;
 $window = Irssi::window_find_name( Irssi::settings_get_str('twitter_window') );

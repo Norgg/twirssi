@@ -11,8 +11,8 @@ $Data::Dumper::Indent = 1;
 
 use vars qw($VERSION %IRSSI);
 
-$VERSION = "2.0.6";
-my ($REV) = '$Rev: 484 $' =~ /(\d+)/;
+$VERSION = "2.1.1";
+my ($REV) = '$Rev: 494 $' =~ /(\d+)/;
 %IRSSI = (
     authors     => 'Dan Boger',
     contact     => 'zigdon@gmail.com',
@@ -21,7 +21,7 @@ my ($REV) = '$Rev: 484 $' =~ /(\d+)/;
       . 'Can optionally set your bitlbee /away message to same',
     license => 'GNU GPL v2',
     url     => 'http://twirssi.com',
-    changed => '$Date: 2009-02-21 13:53:25 -0800 (Sat, 21 Feb 2009) $',
+    changed => '$Date: 2009-02-25 15:20:08 -0800 (Wed, 25 Feb 2009) $',
 );
 
 my $window;
@@ -34,6 +34,7 @@ my %nicks;
 my %friends;
 my %tweet_cache;
 my %id_map;
+my $failwhale            = 0;
 my %irssi_to_mirc_colors = (
     '%k' => '01',
     '%r' => '05',
@@ -415,7 +416,7 @@ sub cmd_login {
         }
         %nicks = %friends;
         $nicks{$user} = 0;
-        &get_updates;
+        return 1;
     } else {
         &notice("Login failed");
     }
@@ -504,7 +505,7 @@ sub cmd_upgrade {
     }
 
     my $md5;
-    unless ($data) {
+    unless ( $data or Irssi::settings_get_bool("twirssi_upgrade_beta") ) {
         eval { use Digest::MD5; };
 
         if ($@) {
@@ -538,11 +539,14 @@ sub cmd_upgrade {
         }
     }
 
-    my $URL = "http://twirssi.com/twirssi.pl";
+    my $URL =
+      Irssi::settings_get_bool("twirssi_upgrade_beta")
+      ? "http://github.com/zigdon/twirssi/raw/master/twirssi.pl"
+      : "http://twirssi.com/twirssi.pl";
     &notice("Downloading twirssi from $URL");
     LWP::Simple::getstore( $URL, "$loc.upgrade" );
 
-    unless ($data) {
+    unless ( $data or Irssi::settings_get_bool("twirssi_upgrade_beta") ) {
         unless ( open( NEW, "$loc.upgrade" ) ) {
             &notice(
 "Failed to read $loc.upgrade.  Check that /set twirssi_location is set to the correct location."
@@ -634,7 +638,7 @@ sub get_updates {
     return unless &logged_in($twit);
 
     my ( $fh, $filename ) = File::Temp::tempfile();
-    binmode($fh, ":utf8");
+    binmode( $fh, ":utf8" );
     my $pid = fork();
 
     if ($pid) {    # parent
@@ -690,10 +694,7 @@ sub do_updates {
 
     print scalar localtime, " - Polling for updates for $username" if &debug;
     my $tweets;
-    eval {
-        $tweets = $obj->friends_timeline(
-            { since => HTTP::Date::time2str($last_poll) } );
-    };
+    eval { $tweets = $obj->friends_timeline(); };
 
     if ($@) {
         print $fh
@@ -841,8 +842,15 @@ sub monitor_child {
     print scalar localtime, " - checking child log at $filename ($attempt)"
       if &debug;
     my $new_last_poll;
+
+    # first time we run we don't want to print out *everything*, so we just
+    # pretend
+    my $suppress = 0;
+    $suppress = 1 unless keys %tweet_cache;
+
     if ( open FILE, $filename ) {
         my @lines;
+        my %new_cache;
         while (<FILE>) {
             chomp;
             last if /^__friends__/;
@@ -855,8 +863,15 @@ sub monitor_child {
             }
 
             if ( not $meta{type} or $meta{type} ne 'searchid' ) {
-                next if exists $meta{id} and exists $tweet_cache{ $meta{id} };
-                $tweet_cache{ $meta{id} } = time;
+                if ( exists $meta{id} and exists $new_cache{ $meta{id} } ) {
+                    next;
+                }
+
+                $new_cache{ $meta{id} } = time;
+
+                if ( exists $meta{id} and exists $tweet_cache{ $meta{id} } ) {
+                    next;
+                }
             }
 
             my $account = "";
@@ -898,7 +913,9 @@ sub monitor_child {
                     $meta{type}, $account, $meta{topic},
                     "\@".$meta{nick}, $marker,  $_
                   ];
-                if ( $meta{id} >
+                if (
+                    exists $id_map{__searches}{ $meta{account} }{ $meta{topic} }
+                    and $meta{id} >
                     $id_map{__searches}{ $meta{account} }{ $meta{topic} } )
                 {
                     $id_map{__searches}{ $meta{account} }{ $meta{topic} } =
@@ -912,7 +929,9 @@ sub monitor_child {
                   ];
             } elsif ( $meta{type} eq 'searchid' ) {
                 print "Search '$meta{topic}' returned id $meta{id}" if &debug;
-                if ( $meta{id} >=
+                if (
+                    exists $id_map{__searches}{ $meta{account} }{ $meta{topic} }
+                    and $meta{id} >=
                     $id_map{__searches}{ $meta{account} }{ $meta{topic} } )
                 {
                     $id_map{__searches}{ $meta{account} }{ $meta{topic} } =
@@ -941,15 +960,19 @@ sub monitor_child {
 
         if ($new_last_poll) {
             print "new last_poll = $new_last_poll" if &debug;
-            for my $line (@lines) {
-                for (@$line[ 2 .. $#$line ]) {
-                    $_ = hilight($_);
+            if ($suppress) {
+                print "First call, not printing updates" if &debug;
+            } else {
+              for my $line (@lines) {
+                  for (@$line[ 2 .. $#$line ]) {
+                      $_ = hilight($_);
                 }
                 $window->printformat(
                     $line->[0],
                     "twirssi_" . $line->[1],
                     @$line[ 2 .. $#$line ]
                 );
+              }
             }
 
             close FILE;
@@ -957,9 +980,13 @@ sub monitor_child {
               or warn "Failed to remove $filename: $!"
               unless &debug;
 
+            # commit the pending cache lines to the actual cache, now that
+            # we've printed our output
+            %tweet_cache = ( %tweet_cache, %new_cache );
+
             # keep enough cached tweets, to make sure we don't show duplicates.
             foreach ( keys %tweet_cache ) {
-                next if $tweet_cache{$_} >= $last_poll;
+                next if $tweet_cache{$_} >= $last_poll - 3600;
                 delete $tweet_cache{$_};
             }
             $last_poll = $new_last_poll;
@@ -976,6 +1003,7 @@ sub monitor_child {
                     &notice("Failed to write replies to $file: $!");
                 }
             }
+            $failwhale = 0;
             return;
         }
     }
@@ -997,6 +1025,23 @@ sub monitor_child {
             $since = sprintf( "%d:%02d", @time[ 2, 1 ] );
         } else {
             $since = scalar localtime($last_poll);
+        }
+
+        if ( not $failwhale and time - $last_poll > 60 * 60 ) {
+            foreach my $whale (
+                q{     v  v        v},
+                q{     |  |  v     |  v},
+                q{     | .-, |     |  |},
+                q{  .--./ /  |  _.---.| },
+                q{   '-. (__..-"       \\},
+                q{      \\          a    |},
+                q{       ',.__.   ,__.-'/},
+                q{         '--/_.'----'`}
+              )
+            {
+                &notice($whale);
+            }
+            $failwhale = 1;
         }
         &notice("Haven't been able to get updated tweets since $since");
     }
@@ -1157,6 +1202,7 @@ Irssi::settings_add_str( "twirssi", "twirssi_replies_store",
     ".irssi/scripts/twirssi.json" );
 Irssi::settings_add_str( "twirssi", "twirssi_nick_color",  "%B" );
 Irssi::settings_add_str( "twirssi", "twirssi_topic_color", "%r" );
+Irssi::settings_add_bool( "twirssi", "twirssi_upgrade_beta",      0 );
 Irssi::settings_add_bool( "twirssi", "tweet_to_away",             0 );
 Irssi::settings_add_bool( "twirssi", "show_reply_context",        0 );
 Irssi::settings_add_bool( "twirssi", "show_own_tweets",           1 );
@@ -1206,6 +1252,11 @@ if ($window) {
             print "nicks: ",   join ", ", sort keys %nicks;
             print "searches: ", Dumper \%{ $id_map{__searches} };
             print "last poll: $last_poll";
+            if ( open DUMP, ">/tmp/twirssi.cache.txt" ) {
+                print DUMP Dumper \%tweet_cache;
+                close DUMP;
+                print "cache written out to /tmp/twirssi.cache.txt";
+            }
         }
     );
     Irssi::command_bind(
@@ -1254,6 +1305,7 @@ if ($window) {
                 my $num = keys %{ $id_map{__indexes} };
                 &notice( sprintf "Loaded old replies from %d contact%s.",
                     $num, ( $num == 1 ? "" : "s" ) );
+                &cmd_list_search;
             };
         } else {
             &notice("Failed to load old replies from $file: $!");
@@ -1274,6 +1326,7 @@ if ($window) {
         and my $autopass = Irssi::settings_get_str("twitter_passwords") )
     {
         &cmd_login();
+        &get_updates;
     }
 
 } else {
